@@ -1,0 +1,19 @@
+# Folder Ingestion Configuration
+
+# Directory to monitor for new subfolders
+source_dir: "F:\\_POINT CLOUD INBOX"
+
+# Directory where processed folders will be moved
+destination_dir: "F:\\_Project Point Cloud Files"
+
+# Path to the Excel log file
+excel_log_path: "F:\\Point Cloud Log.xlsx"
+
+# Retry settings for Excel file access
+retry_attempts: 10
+retry_delay_seconds: 2
+
+# Naming convention pattern (for validation)
+# Expected format: <Project Number (4 or 6 digits)> <PROJECT NAME>
+# Examples: "3019 Hart Island", "3055.12 NPS Phase 2"
+naming_pattern: "^(\\d{4}|\\d{4}\\.\\d{2})\\s+(.+)$"
