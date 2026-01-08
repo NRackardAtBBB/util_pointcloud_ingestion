@@ -17,3 +17,23 @@ retry_delay_seconds: 2
 # Expected format: <Project Number (4 or 6 digits)> <PROJECT NAME>
 # Examples: "3019 Hart Island", "3055.12 NPS Phase 2"
 naming_pattern: "^(\\d{4}|\\d{4}\\.\\d{2})\\s+(.+)$"
+
+# File-level validation settings
+# Supported point cloud file extensions (case-insensitive)
+supported_extensions:
+  - las
+  - laz
+  - pcd
+  - ply
+  - xyz
+  - rcp
+  - rcs
+
+# File naming convention pattern
+# Expected format: <Project Number>_<Date(YYMMDD)>_<Floor/Ext>_<Scope Area>
+# Examples: "2586_251231_Floor 1_Wing P.las", "2635_240502_Exterior.laz"
+file_naming_pattern: "^(?P<project>\\d{4})_(?P<date>\\d{6})_(?P<floor>(?:Floor\\s*\\d+|Exterior|Basement))(?:_(?P<scope>.+))?$"
+
+# Path to file mapping CSV (tracks renamed/moved files)
+# If not specified, defaults to <destination_dir>/file_mappings.csv
+file_mapping_csv: null

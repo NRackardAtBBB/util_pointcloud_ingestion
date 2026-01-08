@@ -5,10 +5,13 @@ Automated script to monitor a source directory for new subfolders, validate nami
 ## Features
 
 - ✅ **Automatic folder scanning** - Checks source directory for new subfolders
-- ✅ **Naming validation** - Enforces `XXXX ProjectName` or `XXXX.XX ProjectName` convention
+- ✅ **Folder naming validation** - Enforces `XXXX ProjectName` or `XXXX.XX ProjectName` convention
+- ✅ **File naming validation** - Validates point cloud files against standardized naming convention
 - ✅ **Smart renaming** - Attempts to fix common naming issues (underscores, missing spaces)
+- ✅ **File flagging** - Prefixes invalid files with `RENAME_` or `UNSUPPORTED_` for review
 - ✅ **Duplicate prevention** - Skips folders already processed or in destination
 - ✅ **Excel logging** - Records folder name, processing date, and file details
+- ✅ **File mapping CSV** - Tracks all valid file movements in a separate CSV log
 - ✅ **Retry logic** - Handles locked Excel files with automatic retries
 - ✅ **Flag system** - Marks folders with 'X' if naming cannot be fixed
 
@@ -41,8 +44,10 @@ The script will:
 1. Scan the source directory for subfolders
 2. Validate each folder name against the naming convention
 3. Attempt to fix names that don't match
-4. Move folders to the destination directory
-5. Log all files to the Excel spreadsheet
+4. Validate all point cloud files within each folder
+5. Flag files that don't match the file naming convention or have unsupported extensions
+6. Move folders to the destination directory
+7. Log all valid files to the Excel spreadsheet and CSV mapping file
 
 ### Automated Execution with Task Scheduler
 
@@ -108,6 +113,80 @@ If the script cannot determine the correct format, it will:
 - Copy the folder with its original name
 - Flag it with 'X' in the Excel log
 
+## File Naming Convention
+
+The script also validates individual point cloud files within each folder. Files must follow this format:
+
+```
+<Project Number>_<Date(YYMMDD)>_<Floor/Ext>_<Scope Area>.<extension>
+```
+
+**Valid Examples:**
+- `2586_251231_Floor 1_Wing P.las`
+- `2635_240502_Exterior.laz`
+- `3020_250815_Floor 3_Great Hall.rcp`
+- `2586_251231_Basement.xyz`
+
+**File Naming Rules:**
+- **Project Number:** 4 digits (e.g., `2586`)
+- **Date:** 6 digits in YYMMDD format (e.g., `251231` for Dec 31, 2025)
+- **Floor/Exterior:** `Floor N`, `Exterior`, or `Basement`
+- **Scope Area:** Optional specific area designation (e.g., `Wing P`, `Main Entry`)
+- **Extension:** Must be a supported point cloud format
+
+**Supported File Extensions:**
+- `.las` - LAS point cloud format
+- `.laz` - Compressed LAS format
+- `.pcd` - Point Cloud Data format
+- `.ply` - Polygon File Format
+- `.xyz` - XYZ point cloud format
+- `.rcp` - ReCap project file
+- `.rcs` - ReCap scan file
+
+**File Validation Behavior:**
+
+When processing folders, the script will:
+
+1. **Valid files** (match naming convention and have supported extension):
+   - Processed normally
+   - Logged to Excel
+   - Recorded in the file mapping CSV
+
+2. **Invalid filenames** (wrong structure, date format, or missing components):
+   - Renamed with `RENAME_` prefix
+   - NOT logged to Excel or CSV
+   - Example: `survey_data.las` → `RENAME_survey_data.las`
+
+3. **Unsupported extensions** (not in the supported list):
+   - Renamed with `UNSUPPORTED_` prefix
+   - NOT logged to Excel or CSV
+   - Example: `2586_251231_Floor 1.txt` → `UNSUPPORTED_2586_251231_Floor 1.txt`
+
+4. **Already flagged files** (starting with `RENAME_` or `UNSUPPORTED_`):
+   - Skipped on subsequent runs
+   - No further action taken
+
+**Name Conflicts:**
+If a flagged name already exists, a timestamp is automatically appended:
+- `RENAME_survey_data_20260108_143022.las`
+
+## File Mapping CSV
+
+The script maintains a separate CSV log (`file_mappings.csv`) that tracks all valid file movements. This provides:
+
+- Audit trail of processed files
+- Original and new file paths
+- Folder name and processing date
+- Naming validation flag
+
+**CSV Format:**
+
+| original_path | new_path | folder | processed_date | naming_flag |
+|---------------|----------|--------|----------------|-------------|
+| F:\\_POINT CLOUD INBOX\\2586 Project\\file.las | F:\\_Project Point Cloud Files\\2586 Project\\file.las | 2586 Project | 2026-01-08 14:30:15 | OK |
+
+The CSV file is appended to on each run, creating a cumulative history of all file processing.
+
 ## Excel Log Format
 
 The script creates/updates an Excel file with the following columns:
@@ -150,6 +229,22 @@ retry_delay_seconds: 2
 
 # Naming convention pattern (regex)
 naming_pattern: "^(\\d{4}|\\d{4}\\.\\d{2})\\s+(.+)$"
+
+# Supported point cloud file extensions
+supported_extensions:
+  - las
+  - laz
+  - pcd
+  - ply
+  - xyz
+  - rcp
+  - rcs
+
+# File naming convention pattern
+file_naming_pattern: "^(?P<project>\\d{4})_(?P<date>\\d{6})_(?P<floor>(?:Floor\\s*\\d+|Exterior|Basement))(?:_(?P<scope>.+))?$"
+
+# Path to file mapping CSV
+file_mapping_csv: null  # Defaults to <destination_dir>/file_mappings.csv
 ```
 
 ## Troubleshooting
