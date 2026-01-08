@@ -9,9 +9,10 @@ import os
 import re
 import shutil
 import time
+import csv
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 import yaml
 import pandas as pd
 from openpyxl import load_workbook, Workbook
@@ -54,6 +55,157 @@ def normalize_folder_name(name: str, pattern: str) -> Tuple[str, str]:
     
     # If all fixes fail, return original name with flag
     return name, 'X'
+
+
+def is_supported_extension(filename: str, supported_exts: List[str]) -> bool:
+    """Check if file has a supported extension (case-insensitive).
+    
+    Args:
+        filename: File name to check
+        supported_exts: List of supported extensions (without dots)
+        
+    Returns:
+        True if extension is supported
+    """
+    file_ext = Path(filename).suffix.lower().lstrip('.')
+    return file_ext in [ext.lower() for ext in supported_exts]
+
+
+def is_valid_filename(filename: str, pattern: str) -> bool:
+    """Validate filename against the point cloud naming convention.
+    
+    Expected format: <Project Number>_<Date(YYMMDD)>_<Floor/Ext>_<Scope Area>
+    Example: 2586_251231_Floor 1_Wing P.las
+    
+    Args:
+        filename: File name to validate (without path)
+        pattern: Regex pattern for validation
+        
+    Returns:
+        True if filename matches convention
+    """
+    # Remove extension for pattern matching
+    name_without_ext = Path(filename).stem
+    
+    # Check if already flagged - skip validation
+    if name_without_ext.startswith('RENAME_') or name_without_ext.startswith('UNSUPPORTED_'):
+        return False
+    
+    # Match against pattern
+    return re.match(pattern, name_without_ext) is not None
+
+
+def flag_and_rename(path: Path, prefix: str = "RENAME_", append_ts_on_conflict: bool = True) -> Path:
+    """Rename file with a flag prefix to indicate it needs renaming.
+    
+    Args:
+        path: Path to the file
+        prefix: Prefix to add (RENAME_ or UNSUPPORTED_)
+        append_ts_on_conflict: Append timestamp if target name exists
+        
+    Returns:
+        New path after rename
+    """
+    new_name = f"{prefix}{path.name}"
+    new_path = path.parent / new_name
+    
+    # Check for conflict
+    if new_path.exists() and append_ts_on_conflict:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem = path.stem
+        ext = path.suffix
+        new_name = f"{prefix}{stem}_{timestamp}{ext}"
+        new_path = path.parent / new_name
+    
+    # Perform rename
+    path.rename(new_path)
+    return new_path
+
+
+def process_files_in_folder(
+    folder: Path,
+    supported_exts: List[str],
+    pattern: str,
+    mapping_csv: Optional[Path] = None
+) -> List[Dict[str, any]]:
+    """Process all files in folder: validate, rename invalid files, collect mappings.
+    
+    Args:
+        folder: Folder containing files to process
+        supported_exts: List of supported file extensions
+        pattern: Regex pattern for filename validation
+        mapping_csv: Optional path to mapping CSV file
+        
+    Returns:
+        List of mapping dictionaries for valid files only
+    """
+    mapping_records = []
+    processed_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Iterate through all files in folder (non-recursive for now)
+    for file_path in folder.iterdir():
+        if not file_path.is_file():
+            continue
+        
+        filename = file_path.name
+        
+        # Skip already flagged files
+        if filename.startswith('RENAME_') or filename.startswith('UNSUPPORTED_'):
+            print(f"    Skipping already flagged file: {filename}")
+            continue
+        
+        # Check extension support
+        if not is_supported_extension(filename, supported_exts):
+            print(f"    Unsupported extension: {filename}")
+            new_path = flag_and_rename(file_path, prefix="UNSUPPORTED_")
+            print(f"      Flagged as: {new_path.name}")
+            continue
+        
+        # Validate filename
+        if is_valid_filename(filename, pattern):
+            # Valid file - add to mapping
+            mapping_records.append({
+                'original_path': str(file_path),
+                'new_path': str(file_path),  # Same as original since valid
+                'folder': folder.name,
+                'processed_date': processed_date,
+                'naming_flag': 'OK'
+            })
+            print(f"    Valid: {filename}")
+        else:
+            # Invalid filename - flag it
+            print(f"    Invalid filename: {filename}")
+            new_path = flag_and_rename(file_path, prefix="RENAME_")
+            print(f"      Flagged as: {new_path.name}")
+            # Do NOT add to mapping records
+    
+    # Write mapping records to CSV if provided
+    if mapping_records and mapping_csv:
+        write_mapping_csv(mapping_records, mapping_csv)
+    
+    return mapping_records
+
+
+def write_mapping_csv(mapping_records: List[Dict[str, any]], csv_path: Path):
+    """Write file mapping records to CSV in append mode.
+    
+    Args:
+        mapping_records: List of mapping dictionaries
+        csv_path: Path to CSV file
+    """
+    file_exists = csv_path.exists()
+    
+    with open(csv_path, 'a', newline='', encoding='utf-8') as f:
+        fieldnames = ['original_path', 'new_path', 'folder', 'processed_date', 'naming_flag']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        
+        # Write header only if file is new
+        if not file_exists:
+            writer.writeheader()
+        
+        writer.writerows(mapping_records)
+    
+    print(f"    Wrote {len(mapping_records)} mapping records to CSV.")
 
 
 def get_folder_files(folder_path: Path) -> List[Dict[str, any]]:
@@ -230,9 +382,25 @@ def process_folders(config: dict):
             folder = new_folder_path
             print(f"  Renamed to: {normalized_name}")
         
-        # Get all files in the folder
+        # Process files: validate and flag invalid files
+        supported_exts = config.get('supported_extensions', ['las', 'laz', 'pcd', 'ply', 'xyz', 'rcp', 'rcs'])
+        file_naming_pattern = config.get('file_naming_pattern', r'^(?P<project>\d{4})_(?P<date>\d{6})_(?P<floor>(?:Floor\s*\d+|Exterior|Basement))(?:_(?P<scope>.+))?$')
+        
+        # Determine mapping CSV path
+        mapping_csv_config = config.get('file_mapping_csv')
+        if mapping_csv_config:
+            mapping_csv = Path(mapping_csv_config)
+        else:
+            # Default to destination directory
+            mapping_csv = destination_dir / 'file_mappings.csv'
+        
+        print(f"  Validating files...")
+        mapping_records = process_files_in_folder(folder, supported_exts, file_naming_pattern, mapping_csv)
+        print(f"  Validated: {len(mapping_records)} files passed naming convention.")
+        
+        # Get all files in the folder (after validation/renaming)
         files_info = get_folder_files(folder)
-        print(f"  Found {len(files_info)} files in folder.")
+        print(f"  Found {len(files_info)} total files in folder.")
         
         # Move folder to destination
         try:
